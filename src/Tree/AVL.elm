@@ -65,6 +65,148 @@ empty =
 -- Basics: Insertion, deletion, member
 
 
+type Flag comparable v
+    = NeedRebalance (Tree comparable v)
+    | NoNeed (Tree comparable v)
+
+
+update : comparable -> (Maybe v -> Maybe v) -> Tree comparable v -> Tree comparable v
+update key alter tree =
+    let
+        getSmallest : Tree a b -> ( a, b )
+        getSmallest tree =
+            case tree of
+                Empty ->
+                    Debug.crash "can't"
+
+                Singleton k v ->
+                    ( k, v )
+
+                Node _ k v Empty _ ->
+                    ( k, v )
+
+                Node _ _ _ left _ ->
+                    getSmallest left
+
+        up :
+            comparable
+            -> (Maybe v -> Maybe v)
+            -> Tree comparable v
+            -> Flag comparable v
+        up key alter tree =
+            case tree of
+                Empty ->
+                    case alter Nothing of
+                        Nothing ->
+                            NoNeed tree
+
+                        Just value ->
+                            singleton key value |> NeedRebalance
+
+                Singleton k v ->
+                    case compare key k of
+                        LT ->
+                            case alter Nothing of
+                                Nothing ->
+                                    NoNeed tree
+
+                                Just value ->
+                                    build k v (singleton key value) empty
+                                        |> NeedRebalance
+
+                        EQ ->
+                            case alter <| Just v of
+                                Nothing ->
+                                    NeedRebalance empty
+
+                                Just value ->
+                                    singleton key value |> NoNeed
+
+                        GT ->
+                            case alter Nothing of
+                                Nothing ->
+                                    NoNeed tree
+
+                                Just value ->
+                                    build k v empty (singleton key value)
+                                        |> balance
+                                        |> NeedRebalance
+
+                Node level k v left right ->
+                    case compare key k of
+                        LT ->
+                            case up key alter left of
+                                NoNeed newLeft ->
+                                    Node level k v newLeft right
+                                        |> NoNeed
+
+                                NeedRebalance newLeft ->
+                                    build k v newLeft right
+                                        |> balance
+                                        |> NeedRebalance
+
+                        EQ ->
+                            case alter <| Just v of
+                                Nothing ->
+                                    case ( left, right ) of
+                                        ( Empty, _ ) ->
+                                            right |> NeedRebalance
+
+                                        ( _, Empty ) ->
+                                            left |> NeedRebalance
+
+                                        ( _, _ ) ->
+                                            let
+                                                ( skey, sval ) =
+                                                    getSmallest right
+
+                                                removeNext =
+                                                    up
+                                                        skey
+                                                        (always Nothing)
+                                                        right
+                                            in
+                                                case removeNext of
+                                                    NoNeed newRight ->
+                                                        build
+                                                            skey
+                                                            sval
+                                                            left
+                                                            newRight
+                                                            |> NoNeed
+
+                                                    NeedRebalance newRight ->
+                                                        build
+                                                            skey
+                                                            sval
+                                                            left
+                                                            newRight
+                                                            |> balance
+                                                            |> NeedRebalance
+
+                                Just value ->
+                                    Node level key value left right
+                                        |> NoNeed
+
+                        GT ->
+                            case up key alter right of
+                                NoNeed newRight ->
+                                    Node level k v left newRight
+                                        |> NoNeed
+
+                                NeedRebalance newRight ->
+                                    build k v left newRight
+                                        |> balance
+                                        |> NeedRebalance
+    in
+        case up key alter tree of
+            NoNeed tree ->
+                tree
+
+            NeedRebalance tree ->
+                tree
+
+
 {-| Insertion semantics in AVL trees are rather simple:
 
 - Locate where the item has to be inserted, which will always be at a
@@ -75,41 +217,7 @@ branch-point
 -}
 insert : comparable -> v -> Tree comparable v -> Tree comparable v
 insert key value set =
-    case set of
-        Empty ->
-            singleton key value
-
-        Singleton head headVal ->
-            case compare key head of
-                LT ->
-                    Node 2
-                        head
-                        headVal
-                        (singleton key value)
-                        empty
-                        |> balance
-
-                GT ->
-                    Node 2
-                        head
-                        headVal
-                        empty
-                        (singleton key value)
-                        |> balance
-
-                EQ ->
-                    Singleton head value
-
-        Node height head headVal left right ->
-            case compare key head of
-                LT ->
-                    tree head headVal (insert key value left) right |> balance
-
-                GT ->
-                    tree head headVal left (insert key value right) |> balance
-
-                EQ ->
-                    tree head value left right
+    update key (always <| Just value) set
 
 
 {-| Removal in AVL trees works by searching for the node to be removed, and
@@ -121,26 +229,7 @@ recursive bubble up, so as to maintain the AVL invariants.
 -}
 remove : comparable -> Tree comparable v -> Tree comparable v
 remove key set =
-    case set of
-        Empty ->
-            set
-
-        Singleton head value ->
-            if head == key then
-                empty
-            else
-                set
-
-        Node _ head headVal left right ->
-            case compare key head of
-                LT ->
-                    tree head headVal (remove key left) right |> balance
-
-                GT ->
-                    tree head headVal left (remove key right) |> balance
-
-                EQ ->
-                    foldl insert right left
+    update key (always Nothing) set
 
 
 {-| Member checks happen the same way as in other binary trees, recursively
@@ -264,8 +353,8 @@ customSingleton val =
 customSingleton 1 == < 1 . . >
 ```
 -}
-tree : k -> v -> Tree k v -> Tree k v -> Tree k v
-tree key value left right =
+build : k -> v -> Tree k v -> Tree k v -> Tree k v
+build key value left right =
     case ( left, right ) of
         ( Empty, Empty ) ->
             singleton key value
@@ -318,10 +407,10 @@ rotateLeft : Tree k v -> Tree k v
 rotateLeft set =
     case set of
         Node _ root rootVal less (Node _ pivot pivotVal between greater) ->
-            tree pivot pivotVal (tree root rootVal less between) greater
+            build pivot pivotVal (build root rootVal less between) greater
 
         Node _ root rootVal less (Singleton pivot pivotVal) ->
-            tree pivot pivotVal (tree root rootVal less empty) empty
+            build pivot pivotVal (build root rootVal less empty) empty
 
         _ ->
             set
@@ -333,10 +422,10 @@ rotateRight : Tree k v -> Tree k v
 rotateRight set =
     case set of
         Node _ root rootVal (Node _ pivot pivotVal less between) greater ->
-            tree pivot pivotVal less (tree root rootVal between greater)
+            build pivot pivotVal less (build root rootVal between greater)
 
         Node _ root rootVal (Singleton pivot pivotVal) greater ->
-            tree pivot pivotVal empty (tree root rootVal empty greater)
+            build pivot pivotVal empty (build root rootVal empty greater)
 
         _ ->
             set
@@ -387,14 +476,14 @@ balance set =
                 if setDiff == -2 then
                     if heightDiff left == 1 then
                         -- left leaning tree with right-leaning left subtree. Rotate left, then right.
-                        tree key value (rotateLeft left) right |> rotateRight
+                        build key value (rotateLeft left) right |> rotateRight
                     else
                         -- left leaning tree, generally. Rotate right.
                         rotateRight set
                 else if setDiff == 2 then
                     if heightDiff right == -1 then
                         -- right leaning tree with left-leaning right subtree. Rotate right, then left.
-                        tree key value left (rotateRight right) |> rotateLeft
+                        build key value left (rotateRight right) |> rotateLeft
                     else
                         -- right leaning tree, generally. Rotate left.
                         rotateLeft set

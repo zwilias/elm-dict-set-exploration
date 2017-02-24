@@ -113,7 +113,7 @@ a collision.
 -}
 insert : comparable -> v -> Dict comparable v -> Dict comparable v
 insert key value (Dict tree) =
-    Dict <| Tree.insert key value tree
+    Dict <| Tree.update key (always <| Just value) tree
 
 
 {-| Remove a key-value pair from a dictionary. If the key is not found,
@@ -121,29 +121,14 @@ no changes are made.
 -}
 remove : comparable -> Dict comparable v -> Dict comparable v
 remove key (Dict tree) =
-    Dict <| Tree.remove key tree
+    Dict <| Tree.update key (always Nothing) tree
 
 
 {-| Update the value of a dictionary for a specific key with a given function.
 -}
 update : comparable -> (Maybe v -> Maybe v) -> Dict comparable v -> Dict comparable v
-update k alter dict =
-    let
-        current =
-            get k dict
-
-        newVal =
-            alter current
-    in
-        case ( current, newVal ) of
-            ( Just v, Nothing ) ->
-                remove k dict
-
-            ( _, Just v ) ->
-                insert k v dict
-
-            ( Nothing, Nothing ) ->
-                dict
+update k alter (Dict tree) =
+    Dict <| Tree.update k alter tree
 
 
 {-| Create a dictionary with one key-value pair.
