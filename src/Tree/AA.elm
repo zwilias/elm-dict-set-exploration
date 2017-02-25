@@ -109,51 +109,8 @@ anything, so calling them after every insertion is safe and guarantees the
 invariants to hold.
 -}
 insert : comparable -> v -> Tree comparable v -> Tree comparable v
-insert key value tree =
-    let
-        fixup : Tree k v -> Tree k v
-        fixup =
-            skew >> split
-    in
-        case tree of
-            Empty ->
-                singleton key value
-
-            Node level left selfk selfv right ->
-                case compare key selfk of
-                    LT ->
-                        Node
-                            level
-                            (insert
-                                key
-                                value
-                                left
-                            )
-                            selfk
-                            selfv
-                            right
-                            |> fixup
-
-                    GT ->
-                        Node
-                            level
-                            left
-                            selfk
-                            selfv
-                            (insert
-                                key
-                                value
-                                right
-                            )
-                            |> fixup
-
-                    EQ ->
-                        Node
-                            level
-                            left
-                            key
-                            value
-                            right
+insert key value =
+    update key (always <| Just value)
 
 
 {-| Removal from AA trees works as follows:
@@ -164,47 +121,113 @@ insert key value tree =
 - While unwinding the stack, `rebalance` - fixing up levels and balance by skewing and splitting.
 -}
 remove : comparable -> Tree comparable v -> Tree comparable v
-remove key tree =
-    case tree of
-        Empty ->
-            Empty
+remove key =
+    update key (always Nothing)
 
-        Node level left selfk selfv right ->
-            case compare key selfk of
-                LT ->
-                    Node level (remove key left) selfk selfv right |> rebalance
 
-                EQ ->
-                    case ( left, right ) of
-                        ( Empty, Empty ) ->
-                            Empty
+type Tag k v
+    = Replace (Tree k v)
+    | Insert (Tree k v)
+    | Delete (Tree k v)
 
-                        ( Empty, _ ) ->
-                            let
-                                ( successork, successorv ) =
-                                    unsafeMinimum right
 
-                                newRight : Tree comparable v
-                                newRight =
-                                    remove successork right
-                            in
-                                Node level left successork successorv newRight
-                                    |> rebalance
+update :
+    comparable
+    -> (Maybe v -> Maybe v)
+    -> Tree comparable v
+    -> Tree comparable v
+update key alter tree =
+    let
+        fixup : Tree k v -> Tree k v
+        fixup =
+            skew >> split
 
-                        ( _, _ ) ->
-                            let
-                                ( predecessork, predecessorv ) =
-                                    unsafeMaximum left
+        up :
+            comparable
+            -> (Maybe v -> Maybe v)
+            -> Tree comparable v
+            -> Tag comparable v
+        up key alter tree =
+            case tree of
+                Empty ->
+                    case alter Nothing of
+                        Nothing ->
+                            Replace tree
 
-                                newLeft : Tree comparable v
-                                newLeft =
-                                    remove predecessork left
-                            in
-                                Node level newLeft predecessork predecessorv right
-                                    |> rebalance
+                        Just value ->
+                            singleton key value
+                                |> Insert
 
-                GT ->
-                    Node level left selfk selfv (remove key right) |> rebalance
+                Node level left k v right ->
+                    case compare key k of
+                        LT ->
+                            case up key alter left of
+                                Replace newLeft ->
+                                    Node level newLeft k v right
+                                        |> Replace
+
+                                Insert newLeft ->
+                                    Node level newLeft k v right
+                                        |> fixup
+                                        |> Insert
+
+                                Delete newLeft ->
+                                    Node level newLeft k v right
+                                        |> rebalance
+                                        |> Delete
+
+                        EQ ->
+                            case alter <| Just v of
+                                Just value ->
+                                    Node level left key value right
+                                        |> Replace
+
+                                Nothing ->
+                                    case ( left, right ) of
+                                        ( Empty, Empty ) ->
+                                            Delete Empty
+
+                                        ( Empty, _ ) ->
+                                            right |> Delete
+
+                                        ( _, _ ) ->
+                                            let
+                                                ( predecessork, predecessorv ) =
+                                                    unsafeMaximum left
+
+                                                newLeft : Tree comparable v
+                                                newLeft =
+                                                    remove predecessork left
+                                            in
+                                                Node level newLeft predecessork predecessorv right
+                                                    |> rebalance
+                                                    |> Delete
+
+                        GT ->
+                            case up key alter right of
+                                Replace newRight ->
+                                    Node level left k v newRight
+                                        |> Replace
+
+                                Insert newRight ->
+                                    Node level left k v newRight
+                                        |> fixup
+                                        |> Insert
+
+                                Delete newRight ->
+                                    Node level left k v newRight
+                                        |> rebalance
+                                        |> Delete
+    in
+        case up key alter tree of
+            Replace tree ->
+                tree
+
+            Insert tree ->
+                tree
+
+            Delete tree ->
+                tree
 
 
 {-| Check if an item is a member of a tree, recursively.

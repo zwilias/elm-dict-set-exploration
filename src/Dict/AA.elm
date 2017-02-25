@@ -127,23 +127,8 @@ remove key (Dict tree) =
 {-| Update the value of a dictionary for a specific key with a given function.
 -}
 update : comparable -> (Maybe v -> Maybe v) -> Dict comparable v -> Dict comparable v
-update k alter dict =
-    let
-        current =
-            get k dict
-
-        newVal =
-            alter current
-    in
-        case ( current, newVal ) of
-            ( Just v, Nothing ) ->
-                remove k dict
-
-            ( _, Just v ) ->
-                insert k v dict
-
-            ( Nothing, Nothing ) ->
-                dict
+update key alter (Dict tree) =
+    Dict <| Tree.update key alter tree
 
 
 {-| Create a dictionary with one key-value pair.
